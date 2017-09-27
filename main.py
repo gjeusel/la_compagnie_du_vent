@@ -194,6 +194,8 @@ lst_col_model = ['fc_hor', 'RS', 'CAPE', 'SP', 'CP',
                  'vit_10', 'dir_100', 'dir_10']
 
 
+lst_col_prev = ['Date', 'Eolienne', 'pred']
+
 class model_ml:
     def __init__(self, lst_turb=[1], lst_grid=[8, 9], lst_col_model=lst_col_model,
                  col_target='Production_mean_hour',
