@@ -24,6 +24,7 @@ working_dir = os.path.dirname(script_path)
 
 data_dir = working_dir + "/data/"
 data_reformated_dir = working_dir + "/reformated_data/"
+results_dir = working_dir + "/results/"
 
 park_col_type = {
     'drop': ['Etat', 'TurbBrut', 'TurbOK', 'GridBrut', 'GridOK', 'Figee',
@@ -40,7 +41,7 @@ def create_df_park_data(list_num_park, list_date_park):
         for date_park in list_date_park:
             fname_in = data_dir + 'Parc' + str(num_park) + '_'\
                 + str(date_park) + '.csv'
-            print('Reading ' + fname_in + '...')
+            # print('Reading ' + fname_in + '...')
             df_park_data = df_park_data.append(
                 pd.read_csv(fname_in, sep=";", decimal=','),
                 ignore_index=True)
@@ -80,7 +81,7 @@ def reformate_park_csv(list_num_park=[1, 2, 3],
     # we add this value in the initial dataset "df"
     df = pd.merge(df, df_product_mean,
                   on=["Eolienne", "Date_hour_int"], how="left")
-    df = df[park_col_type['keep']].copy()
+    df = df[park_col_type['keep']]
 
     # output csv files per turbine :
     for num_turb in range(1, 12):
@@ -101,7 +102,7 @@ def reformate_PrevMeteo_excel(sep=';'):
 
         # The aim of this challenge is to predict the Production of tomorrow.
         # So only forecast (fc_hor) between 25h and 47h will be kept :
-        df = df[(df['fc_hor'] >= 24) & (df['fc_hor'] <= 47)].copy()
+        df = df[(df['fc_hor'] >= 24) & (df['fc_hor'] <= 47)]
 
         # No Daylight Saving Time (DST) gap so assumed in GMT+00
         # Convert datetime GMT+00 into datetime GMT+01:
@@ -130,7 +131,7 @@ def reformate_all_data():
     return
 
 
-def get_df_turbines(lst_turb=[1]):
+def get_df_turbines(lst_turb):
     df_turb = pd.DataFrame()
     for num_turb in lst_turb:
         fname_in_turb = data_reformated_dir + 'turb_' + str(num_turb) + '.csv'
@@ -143,11 +144,13 @@ def get_df_turbines(lst_turb=[1]):
     # minute
     # Right now, only keeping dt.minute == 0 :
     df_turb = df_turb[(df_turb['Date'].dt.minute == 0)
-                      & (df_turb['Fonctionnement'] == 1)].copy()
+                      & (df_turb['Fonctionnement'] == 1)]
+    df_turb.sort_values('Date', ascending=1, inplace=True)
+    df_turb.reset_index()
     return df_turb
 
 
-def get_df_weather(lst_grid=[8, 9]):
+def get_df_weather(lst_grid):
     df_weather = pd.DataFrame()
     for num_grid in lst_grid:
         fname_in_grid = data_reformated_dir + 'PrevMeteo_Grille' +\
@@ -157,6 +160,8 @@ def get_df_weather(lst_grid=[8, 9]):
 
         df_weather = df_weather.append(df_tmp)
     df_weather['Date'] = pd.to_datetime(df_weather['Date'], format="%Y-%m-%d %H:%M:%S")
+    df_weather.sort_values('Date', ascending=1, inplace=True)
+    df_weather.reset_index()
     return df_weather
 
 
@@ -170,10 +175,10 @@ def get_bounds_datetime(df_turb, df_weather):
 
 def merge_df_turb_weather(df_turb, df_weather):
     dt_min, dt_max = get_bounds_datetime(df_turb, df_weather)
-    df_turb = df_turb[(df_turb['Date'] > dt_min) & (df_turb['Date'] <
-                      dt_max)].copy()
-    df_weather = df_weather[(df_weather['Date'] > dt_min) & (df_weather['Date'] <
-                            dt_max)].copy()
+    df_turb = df_turb[(df_turb['Date'] >= dt_min) & (df_turb['Date'] <=
+                      dt_max)]
+    df_weather = df_weather[(df_weather['Date'] >= dt_min) &
+                            (df_weather['Date'] <= dt_max)]
     df = pd.merge(df_turb, df_weather, on='Date', how='left')
     df.sort_values('Date', ascending=1, inplace=True)
     df.reset_index()
@@ -196,52 +201,74 @@ lst_col_model = ['fc_hor', 'RS', 'CAPE', 'SP', 'CP',
 
 lst_col_prev = ['Date', 'Eolienne', 'pred']
 
+dt_start_pred = datetime(2017, 1, 1, 0, 0)
+dt_start_pred = datetime(2017, 4, 14, 23, 0)
+
+
 class model_ml:
     def __init__(self, lst_turb=[1], lst_grid=[8, 9], lst_col_model=lst_col_model,
                  col_target='Production_mean_hour',
-                 will_submit=False):
+                 submit_mode=False):
 
-        if will_submit is False:
-            # Storing config :
-            self.lst_turb = lst_turb
-            self.lst_grid = lst_grid
-            self.lst_col_model = lst_col_model
-            self.col_target = col_target
+        # Storing config :
+        self.submit_mode = submit_mode
 
-            from sklearn.model_selection import train_test_split
-            df = get_df_all(lst_turb=lst_turb, lst_grid=lst_grid)
-            self.train, self.test = train_test_split(df, test_size=0.2)
-            self.scores = pd.DataFrame(columns=['lst_turb', 'lst_grid',
-                                                'Model', 'Params', 'MAE'])
-
+        if submit_mode:
+            print('---> Submit mode activated ! <---')
+            self.lst_turb = range(1, 12)
+            now = datetime.now()
+            self.fname_out = results_dir + 'lcv_submit_GJ_' + str(now.day) +\
+                '_' + str(now.hour) + '_' + str(now.minute)
         else:
-            print('Reading and formatting all datas ...')
+            self.lst_turb = lst_turb
+
+        self.lst_grid = lst_grid
+        self.lst_col_model = lst_col_model
+        self.col_target = col_target
+
+    def get_datas(self):
+        print('Reading and formatting all datas ...')
+        if self.submit_mode:
             df_parks_2017 = create_df_park_data(list_num_park=[1, 2, 3],
                                                 list_date_park=['2017'])
-            df_parks_2017 = df_parks_2017['Date', 'Eolienne',
-                                          'Fonctionnement'].copy()
+            df_parks_2017 = df_parks_2017[['Date', 'Eolienne']]
             df_parks_2017['Date'] = pd.to_datetime(
                 df_parks_2017['Date'], format="%d/%m/%Y %H:%M")
 
+            df_parks_2017 = df_parks_2017[df_parks_2017['Date'].dt.minute == 0]
+
             df_turb = get_df_turbines(lst_turb=range(1, 12))
-            df_weather = get_df_weather(lst_grid=range(1, 17))
+            df_weather = get_df_weather(lst_grid=self.lst_grid)
+
+            self.df_train = merge_df_turb_weather(df_turb, df_weather)
+            self.df_pred = merge_df_turb_weather(df_parks_2017, df_weather)
+
+        else:
+            df = get_df_all(lst_turb=self.lst_turb, lst_grid=self.lst_grid)
+            from sklearn.model_selection import train_test_split
+            self.df_train, self.df_test = train_test_split(df, test_size=0.2)
+            self.scores = pd.DataFrame(columns=['lst_turb', 'lst_grid',
+                                                'Model', 'Params', 'MAE'])
 
     def compute(self, modeltype, **kwargs):
         print('-------------------------------------------')
         if kwargs != {}:
             print(kwargs)
 
-        model = modeltype(**kwargs)
+        if self.submit_mode:
+            self.compute_submit(modeltype=modeltype, **kwargs)
+        else:
+            model = modeltype(**kwargs)
 
-        print('Training ' + str(modeltype) + ' model ...')
-        model.fit(self.train[self.lst_col_model], self.train[self.col_target])
+            print('Training ' + str(modeltype) + ' model ...')
+            model.fit(self.df_train[self.lst_col_model], self.df_train[self.col_target])
 
-        print('Testing ' + str(modeltype) + ' model ...')
-        y_pred = model.predict(self.test[self.lst_col_model])
-        mae = mean_absolute_error(y_pred, self.test[self.col_target])
-        self.scores.loc[self.scores.shape[0]] =\
-            [self.lst_turb, self.lst_grid, str(modeltype), kwargs, mae]
-        return mae
+            print('Testing ' + str(modeltype) + ' model ...')
+            y_pred = model.predict(self.df_test[self.lst_col_model])
+            mae = mean_absolute_error(y_pred, self.df_test[self.col_target])
+            self.scores.loc[self.scores.shape[0]] =\
+                [self.lst_turb, self.lst_grid, str(modeltype), kwargs, mae]
+            return mae
 
     def param_study_grad(self):
         from sklearn import ensemble
@@ -257,6 +284,18 @@ class model_ml:
                               'max_depth': max_depth}
                     self.compute(ensemble.GradientBoostingRegressor, **params)
 
+    def compute_submit(self, modeltype, **kwargs):
+        model = modeltype(**kwargs)
+        print('Training ' + str(modeltype) + ' model ...')
+        model.fit(self.df_train[self.lst_col_model], self.df_train[self.col_target])
+
+        print('Predicting ' + str(modeltype) + ' model ...')
+        self.df_pred['pred'] = model.predict(self.df_pred[self.lst_col_model])
+
+    def write_submit_csv(self):
+        self.df_pred[['Date', 'Eolienne', 'pred']].to_csv(self.fname_out,
+                                                          sep=';')
+
 
 class test_ipython:
     def __init__(self):
@@ -268,7 +307,7 @@ class test_ipython:
                                             format="%Y-%m-%d %H:%M:%S")
 
         self.grid1 = pd.read_csv(data_reformated_dir+'PrevMeteo_Grille1.csv',
-                                   sep=';')
+                                 sep=';')
         self.grid1['Date'] = pd.to_datetime(self.grid1['Date'],
                                             format="%Y-%m-%d %H:%M:%S")
 
@@ -280,9 +319,13 @@ if not os.path.isdir(data_dir):
 if not os.path.isdir(data_reformated_dir):
     os.makedirs(data_reformated_dir)
 
+if not os.path.isdir(results_dir):
+    os.makedirs(results_dir)
+
 params_grad = {'n_estimators': 400, 'max_depth': 10, 'learning_rate': 0.1}
 
-m = model_ml()
+# m = model_ml()
 # m = model_ml(lst_turb=range(1, 12), lst_grid=[8, 9])
+m = model_ml(submit_mode=True)
 # m.compute(LinearRegression)
 # m.compute(ensemble.GradientBoostingRegressor, **params_grad)
