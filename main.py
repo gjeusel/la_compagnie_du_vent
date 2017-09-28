@@ -216,9 +216,6 @@ class model_ml:
         if submit_mode:
             print('---> Submit mode activated ! <---')
             self.lst_turb = range(1, 12)
-            now = datetime.now()
-            self.fname_out = results_dir + 'lcv_submit_GJ_' + str(now.day) +\
-                '_' + str(now.hour) + '_' + str(now.minute)
         else:
             self.lst_turb = lst_turb
 
@@ -231,11 +228,13 @@ class model_ml:
         if self.submit_mode:
             df_parks_2017 = create_df_park_data(list_num_park=[1, 2, 3],
                                                 list_date_park=['2017'])
-            df_parks_2017 = df_parks_2017[['Date', 'Eolienne']]
             df_parks_2017['Date'] = pd.to_datetime(
                 df_parks_2017['Date'], format="%d/%m/%Y %H:%M")
 
-            df_parks_2017 = df_parks_2017[df_parks_2017['Date'].dt.minute == 0]
+            df_parks_2017 = df_parks_2017[
+                (df_parks_2017['Date'].dt.minute == 0) &
+                (df_parks_2017['Fonctionnement'] == 1)]
+            df_parks_2017 = df_parks_2017[['Date', 'Eolienne']]
 
             df_turb = get_df_turbines(lst_turb=range(1, 12))
             df_weather = get_df_weather(lst_grid=self.lst_grid)
@@ -293,8 +292,14 @@ class model_ml:
         self.df_pred['pred'] = model.predict(self.df_pred[self.lst_col_model])
 
     def write_submit_csv(self):
-        self.df_pred[['Date', 'Eolienne', 'pred']].to_csv(self.fname_out,
-                                                          sep=';')
+        now = datetime.now()
+        fname_out = results_dir + 'lcv_submit_GJ_' + str(now.day) +\
+            '_' + str(now.hour) + '_' + str(now.minute) + '.csv'
+        # Computing the mean production predicted for each hour according to
+        # grid id :
+        df = self.df_pred[['Date', 'Eolienne', 'pred']]
+        df = df.groupby(['Date', 'Eolienne']).mean().reset_index()
+        df.to_csv(fname_out, sep=';', index=False)
 
 
 class test_ipython:
@@ -322,7 +327,8 @@ if not os.path.isdir(data_reformated_dir):
 if not os.path.isdir(results_dir):
     os.makedirs(results_dir)
 
-params_grad = {'n_estimators': 400, 'max_depth': 10, 'learning_rate': 0.1}
+params_grad = {'n_estimators': 400, 'max_depth': 10, 'learning_rate': 0.1,
+               'verbose': 1}
 
 # m = model_ml()
 # m = model_ml(lst_turb=range(1, 12), lst_grid=[8, 9])
