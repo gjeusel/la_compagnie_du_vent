@@ -8,13 +8,14 @@ from datetime import datetime, timedelta, tzinfo
 from dateutil import tz
 
 import pandas as pd
-
 import numpy as np
 
 from sklearn.metrics import mean_absolute_error
 
 from sklearn.linear_model import LinearRegression
 from sklearn import ensemble
+
+import plot
 
 
 ##############################################
@@ -270,7 +271,6 @@ class model_ml:
             return mae
 
     def param_study_grad(self):
-        from sklearn import ensemble
         learning_rate_arr = np.arange(0.1, 0.5, 0.1)
         n_estimators_arr = np.arange(400, 500, 100)
         max_depth_arr = np.arange(8, 20, 2)
@@ -282,6 +282,23 @@ class model_ml:
                               'n_estimators': n_estimators,
                               'max_depth': max_depth}
                     self.compute(ensemble.GradientBoostingRegressor, **params)
+
+    def param_study_lst_grid(self,
+                             modeltype=ensemble.GradientBoostingRegressor):
+        from sklearn.model_selection import train_test_split
+        from itertools import combinations
+        df_turb = get_df_turbines(lst_turb=[1])
+        self.scores = pd.DataFrame(columns=['lst_turb', 'lst_grid',
+                                            'Model', 'Params', 'MAE'])
+        for n_grid in range(1, 17):
+            for lst in combinations(range(1, 17), n_grid):
+                self.lst_grid = lst
+                df_weather = get_df_weather(lst_grid=lst)
+                df = merge_df_turb_weather(df_turb, df_weather)
+                self.df_train, self.df_test = train_test_split(df, test_size=0.2)
+                self.compute(ensemble.GradientBoostingRegressor, verbose=1)
+
+
 
     def compute_submit(self, modeltype, **kwargs):
         model = modeltype(**kwargs)
@@ -330,8 +347,8 @@ if not os.path.isdir(results_dir):
 params_grad = {'n_estimators': 400, 'max_depth': 10, 'learning_rate': 0.1,
                'verbose': 1}
 
-# m = model_ml()
+m = model_ml()
 # m = model_ml(lst_turb=range(1, 12), lst_grid=[8, 9])
-m = model_ml(submit_mode=True)
+# m = model_ml(submit_mode=True)
 # m.compute(LinearRegression)
 # m.compute(ensemble.GradientBoostingRegressor, **params_grad)
