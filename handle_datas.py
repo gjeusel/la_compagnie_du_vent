@@ -146,7 +146,7 @@ def reformate_PrevMeteo2(sep=';'):
 
         df_tmp = df[lst_cols]
 
-        lst_cols_names = lst_cols + [
+        lst_cols_names = ['Date', 'fc_hor', 'Run',
             'TMP2m', 'VRH2m', 'UGRD10m', 'VGRD10m', 'W10m', 'Dir10m',
             'TMP80m', 'PRES80m', 'UGRD80m', 'VGRD80m', 'W80m', 'Dir80m',
             'TMP100m', 'UGRD100m', 'VGRD100m', 'W100m', 'Dir100m'
