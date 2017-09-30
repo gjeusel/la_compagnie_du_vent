@@ -16,6 +16,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn import ensemble
 
 import plot
+import handle_datas
 
 
 ##############################################
@@ -27,109 +28,49 @@ data_dir = working_dir + "/data/"
 data_reformated_dir = working_dir + "/reformated_data/"
 results_dir = working_dir + "/results/"
 
-park_col_type = {
-    'drop': ['Etat', 'TurbBrut', 'TurbOK', 'GridBrut', 'GridOK', 'Figee',
-             'Manquante'],
-    'keep': ['Date', 'Eolienne', 'Production', 'Fonctionnement',
-             'Production_mean_hour']
-}
+
+def set_column_sequence(dataframe, seq, front=True):
+    '''Takes a dataframe and a subsequence of its columns,
+       returns dataframe with seq as first columns if "front" is True,
+       and seq as last columns if "front" is False.
+    '''
+    cols = seq[:] # copy so we don't mutate seq
+    for x in dataframe.columns:
+        if x not in cols:
+            if front: #we want "seq" to be in the front
+                #so append current column to the end of the list
+                cols.append(x)
+            else:
+                #we want "seq" to be last, so insert this
+                #column in the front of the new column list
+                #"cols" we are building:
+                cols.insert(0, x)
+    return dataframe[cols]
 
 
-# Function from ipython notebook : reading ParcX_20XX.csv
-def create_df_park_data(list_num_park, list_date_park):
-    df_park_data = pd.DataFrame()
-    for num_park in list_num_park:
-        for date_park in list_date_park:
-            fname_in = data_dir + 'Parc' + str(num_park) + '_'\
-                + str(date_park) + '.csv'
-            # print('Reading ' + fname_in + '...')
-            df_park_data = df_park_data.append(
-                pd.read_csv(fname_in, sep=";", decimal=','),
-                ignore_index=True)
-    return df_park_data
+def get_bounds_datetime(df1, df2, *dfs):
+    # Youngest admissible to avoid missing values :
+    dt_min = max(min(df1['Date']), min(df2['Date']))
+    # Oldest admissible to avoid missing values :
+    dt_max = min(max(df1['Date']), max(df2['Date']))
+
+    for df in dfs:
+        dt_min = max(dt_min, min(df['Date']))
+        dt_max = min(dt_max, max(df['Date']))
+
+    return dt_min, dt_max
 
 
-def reformate_park_csv(list_num_park=[1, 2, 3],
-                       list_date_park=['2015', '2016'],
-                       sep=';'):
-    """Read all ParcX_20XX.csv,
-    add a Production_mean_hour column, keep only park_col_type['keep'],
-    and finally right into csv per turbine in data_reformated_dir.
-    """
-
-    # Reading parkX_20XX.csv ...
-    df = create_df_park_data(list_num_park, list_date_park)
-
-    # Dropping Useless columns for speed up
-    df.drop(park_col_type['drop'], axis=1, inplace=True)
-
-    # Converting in datetime types and keeping in GMT+01:
-    print("Converting 'Date' column in datetime type ...")
-    df['Date'] = pd.to_datetime(df['Date'], format="%d/%m/%Y %H:%M")
-
-    # we create an ident for each hour "Date_hour_int"
-    print('Constructing id for each date & hour ...')
-    df["Date_hour_int"] = df["Date"].dt.year*10**6 + df["Date"].dt.month*10**4\
-        + df["Date"].dt.day*10**2 + df["Date"].dt.hour
-
-    # we create a dataframe with "production_mean_hour" value for each
-    # Eolienne*date_hour_int
-    print("Computing 'Production_mean_hour' ...")
-    df_product_mean = df[df["Fonctionnement"] == 1]\
-        .groupby(["Eolienne", "Date_hour_int"])["Production"]\
-        .mean().reset_index().rename(columns={"Production": "Production_mean_hour"})
-
-    # we add this value in the initial dataset "df"
-    df = pd.merge(df, df_product_mean,
-                  on=["Eolienne", "Date_hour_int"], how="left")
-    df = df[park_col_type['keep']]
-
-    # output csv files per turbine :
-    for num_turb in range(1, 12):
-        fname_out = data_reformated_dir + 'turb_' + str(num_turb) + '.csv'
-        print('Storing ' + fname_out + ' ...')
-        df_tmp = df.loc[df['Eolienne'] == 'Turb'+str(num_turb)]
-        df_tmp.to_csv(fname_out, sep=sep, index=False)
-
-
-def reformate_PrevMeteo_excel(sep=';'):
-    for i in range(1, 17):
-        fname_in = data_dir + 'PrevMeteo_Grille'+str(i)+'.xlsx'
-        fname_out = data_reformated_dir + 'PrevMeteo_Grille'+str(i)+'.csv'
-        print('Converting ' + fname_in + ' into ' + fname_out + ' ...')
-
-        df = pd.read_excel(fname_in, sheetname='Feuil1', header=0)
-        # Not Needed to change datetimes because already in GMT+00
-
-        # The aim of this challenge is to predict the Production of tomorrow.
-        # So only forecast (fc_hor) between 25h and 47h will be kept :
-        df = df[(df['fc_hor'] >= 24) & (df['fc_hor'] <= 47)]
-
-        # No Daylight Saving Time (DST) gap so assumed in GMT+00
-        # Convert datetime GMT+00 into datetime GMT+01:
-        # Get a SegFault on Linux :
-        # df['date'] = df['date'].apply(lambda x: datetime
-        #                             .strptime(x, '%d/%m/%Y %H:%M')
-        #                             .replace(tzinfo=tz.gettz('GMT+00'))
-        #                             .astimezone(tz.gettz('GMT+01')))
-        df['date'] = pd.to_datetime(df['date'], format="%d/%m/%Y %H:%M")
-        df['date'] = df['date'].apply(lambda x: x + timedelta(hours=1))
-
-        # Keeping only registers for which datetime <= 14/04/2017 23:00 (of no use)
-        df = df[df['date'] <= datetime(2017, 4, 14, 23)]
-
-        # Renaming for same column label as ParcX_20XX.csv :
-        df = df.rename(columns={'date': 'Date'})
-
-        df.to_csv(fname_out, sep=sep, index=False)
-
-
-def reformate_all_data():
-    reformate_park_csv(list_num_park=[1, 2, 3],
-                       list_date_park=['2015', '2016'])
-
-    reformate_PrevMeteo_excel()
-    return
+def drop_outof_dt_bounds(dt_min, dt_max, *dfs):
+    dfs_out = []
+    if len(dfs) == 0:
+        raise Exception('DataFrames not provided in drop_outof_dt_bounds()')
+    for i in range(0, len(dfs)):
+        df = dfs[i]
+        dfs_out.append(
+            df[(df['Date'] >= dt_min) & (df['Date'] <= dt_max)].copy()
+        )
+    return dfs_out
 
 
 def get_df_turbines(lst_turb):
@@ -151,27 +92,89 @@ def get_df_turbines(lst_turb):
     return df_turb
 
 
-def get_df_weather(lst_grid):
+def get_df_weather_red(lst_grid):
+    if not all(num_grid > 0 for num_grid in lst_grid):
+        raise Exception('Error in get_df_weather_red : grid_id are only positives')
+    elif len(lst_grid) == 0:
+        return pd.DataFrame()
+
     df_weather = pd.DataFrame()
     for num_grid in lst_grid:
         fname_in_grid = data_reformated_dir + 'PrevMeteo_Grille' +\
                         str(num_grid) + '.csv'
+
         df_tmp = pd.read_csv(fname_in_grid, sep=';')
-        df_tmp['grid id'] = pd.Series(num_grid, index=df_tmp.index)
+        df_tmp['grid_id'] = pd.Series(num_grid, index=df_tmp.index)
 
         df_weather = df_weather.append(df_tmp)
+
     df_weather['Date'] = pd.to_datetime(df_weather['Date'], format="%Y-%m-%d %H:%M:%S")
-    df_weather.sort_values('Date', ascending=1, inplace=True)
+
+    df_weather = set_column_sequence(df_weather, ['Date', 'fc_hor', 'grid_id'])
+    df_weather.sort_values(by=['Date', 'fc_hor', 'grid_id'],
+                           ascending=[True, True, True],
+                           inplace=True)
     df_weather.reset_index()
     return df_weather
 
 
-def get_bounds_datetime(df_turb, df_weather):
-    # Youngest admissible to avoid missing values :
-    dt_min = max(min(df_turb['Date']), min(df_weather['Date']))
-    # Oldest admissible to avoid missing values :
-    dt_max = min(max(df_turb['Date']), max(df_weather['Date']))
-    return dt_min, dt_max
+def get_df_weather_yellow(lst_grid):
+    if not all(num_grid < 0 for num_grid in lst_grid):
+        raise Exception('Error in get_df_weather_yellow : grid_id are only negatives')
+    elif len(lst_grid) == 0:
+        return pd.DataFrame()
+
+    df_weather = pd.DataFrame()
+    for num_grid in lst_grid:
+        fname_in_grid = data_reformated_dir + 'PrevMeteo_Grille' +\
+                        str(num_grid) + '.csv'
+
+        df_tmp = pd.read_csv(fname_in_grid, sep=';')
+        df_tmp['grid_id'] = pd.Series(num_grid, index=df_tmp.index)
+
+        df_weather = df_weather.append(df_tmp)
+
+    df_weather['Date'] = pd.to_datetime(df_weather['Date'], format="%Y-%m-%d %H:%M:%S")
+
+    df_weather = set_column_sequence(df_weather, ['Date', 'fc_hor', 'grid_id'])
+    df_weather.sort_values(by=['Date', 'fc_hor', 'grid_id'],
+                           ascending=[True, True, True],
+                           inplace=True)
+    df_weather.reset_index()
+    return df_weather
+
+
+def get_df_weather(lst_grid):
+    df_red = get_df_weather_red([n for n in lst_grid if n > 0])
+    df_yellow = get_df_weather_yellow([n for n in lst_grid if n < 0])
+
+    if (df_red.empty):
+        df = df_yellow
+    elif (df_yellow.empty):
+        df = df_red
+    else:
+        dt_min, dt_max = get_bounds_datetime(df_red, df_yellow)
+        df_red, df_yellow = \
+            drop_outof_dt_bounds(dt_min, dt_max, df_red, df_yellow)
+
+        df = pd.merge(df_red, df_yellow, on=['Date', 'fc_hor'], how='left')
+
+    return df
+
+
+def filter_fc_hor(df, lst_da=[2]):
+    # Rem :
+    # The aim of this challenge is to predict the Production of tomorrow.
+    # So only forecast (fc_hor) between 25h and 47h can be used to predict:
+    df_tmp = pd.DataFrame()
+    for da_num in lst_da:
+        if da_num == 1:
+            df_tmp.append( df[(df['fc_hor'] <= 23)] )
+        if da_num == 2:
+            df_tmp.append( df[(df['fc_hor'] >= 24) & (df['fc_hor'] <= 47)] )
+        if da_num == 3:
+            df_tmp.append( df[(df['fc_hor'] >= 48 )] )
+    return df_tmp
 
 
 def merge_df_turb_weather(df_turb, df_weather):
@@ -207,7 +210,9 @@ dt_start_pred = datetime(2017, 4, 14, 23, 0)
 
 
 class model_ml:
-    def __init__(self, lst_turb=[1], lst_grid=[8, 9], lst_col_model=lst_col_model,
+    def __init__(self, lst_turb=[1], lst_grid=[-8, 9],
+                 lst_da_train=[1],
+                 lst_col_model=lst_col_model,
                  col_target='Production_mean_hour',
                  submit_mode=False):
 
@@ -221,11 +226,15 @@ class model_ml:
             self.lst_turb = lst_turb
 
         self.lst_grid = lst_grid
+        self.lst_da_train = lst_da_train
         self.lst_col_model = lst_col_model
         self.col_target = col_target
 
     def get_datas(self):
         print('Reading and formatting all datas ...')
+        df_
+
+
         if self.submit_mode:
             df_parks_2017 = create_df_park_data(list_num_park=[1, 2, 3],
                                                 list_date_park=['2017'])
@@ -307,6 +316,25 @@ class model_ml:
 
         print('Predicting ' + str(modeltype) + ' model ...')
         self.df_pred['pred'] = model.predict(self.df_pred[self.lst_col_model])
+
+    def compute_submit_nturb_models(self, modeltype, **kwargs):
+        df_pred = pd.DataFrame()
+        for nturb in range(1, 12):
+            print('-------------------------------------------')
+            df_train_tmp = self.df_train[self.df_train['Eolienne']
+                                         == 'Turb' + str(nturb)].copy()
+            df_pred_tmp = self.df_pred[self.df_pred['Eolienne']
+                                       == 'Turb' + str(nturb)].copy()
+
+            print('Processing turbine ' + str(nturb))
+            model = modeltype(**kwargs)
+            model.fit(df_train_tmp[self.lst_col_model],
+                      df_train_tmp[self.col_target])
+            df_pred_tmp['pred'] = model.predict(df_pred_tmp[self.lst_col_model])
+            df_pred = df_pred.append(df_pred_tmp)
+
+        self.df_pred = df_pred
+
 
     def write_submit_csv(self):
         now = datetime.now()

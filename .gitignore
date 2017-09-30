@@ -7,3 +7,5 @@ process_data.py
 reformated_data/
 tags
 results/*
+*.pyc
+tmp_*
