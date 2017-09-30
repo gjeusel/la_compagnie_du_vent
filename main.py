@@ -222,6 +222,12 @@ lst_col_model = ['RS', 'CAPE', 'SP', 'CP',
                  'TSRC', 'SSRC', 'STRC', 'TP', 'FA', 'U100', 'V100', 'vit_100',
                  'vit_10', 'dir_100', 'dir_10']
 
+# lst_col_model = ['SP', 'CP',
+#                  'BLD', 'SSHF', 'SLHF', 'MSL', 'BLH', 'TCC', 'U10', 'V10', 'T2',
+#                  'D2', 'STRD', 'SSR', 'STR', 'TSR', 'LCC', 'MCC', 'HCC',
+#                  'STRC', 'TP', 'FA', 'U100', 'V100', 'vit_100',
+#                  'vit_10', 'dir_100', 'dir_10']
+
 lst_col_prev = ['Date', 'Eolienne', 'pred']
 
 dt_start_pred = datetime(2017, 1, 1, 0, 0)
@@ -285,6 +291,14 @@ class model_ml:
             df = merge_df_turb_weather(df_turb, df_weather,
                                        lst_da=self.lst_da_train)
             self.df_train, self.df_test = train_test_split(df, test_size=0.2)
+
+
+    def filter_outliers(self, zscore_max_abs=3):
+        from scipy.stats import zscore
+        self.df_train[self.lst_col_model] = self.df_train[self.lst_col_model]\
+            [(np.abs(zscore(self.df_train[self.lst_col_model])) < zscore_max_abs)
+             .all(axis=1)]
+        self.df_train.dropna(inplace=True)
 
 
     def compute(self, modeltype, **kwargs):
@@ -395,7 +409,8 @@ if not os.path.isdir(results_dir):
 params_grad = {'n_estimators': 400, 'max_depth': 10, 'learning_rate': 0.1,
                'verbose': 1}
 
-m = model_ml(lst_turb=range(1, 12), lst_grid=range(1,17))
+# m = model_ml(lst_turb=range(1, 12), lst_grid=range(1,17))
+m = model_ml()
 m.get_datas()
 df = m.df_train[ [m.col_target] + m.lst_col_model ]
 
