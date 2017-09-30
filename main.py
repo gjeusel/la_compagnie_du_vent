@@ -3,6 +3,12 @@
 
 import sys
 import os
+reload(sys)
+sys.setdefaultencoding('utf8') # problem with encoding
+
+import matplotlib
+matplotlib.use("Qt4Agg") # enable plt.show() to display
+import matplotlib.pyplot as plt
 
 from datetime import datetime, timedelta, tzinfo
 from dateutil import tz
@@ -61,16 +67,9 @@ def get_bounds_datetime(df1, df2, *dfs):
     return dt_min, dt_max
 
 
-def drop_outof_dt_bounds(dt_min, dt_max, *dfs):
-    dfs_out = []
-    if len(dfs) == 0:
-        raise Exception('DataFrames not provided in drop_outof_dt_bounds()')
-    for i in range(0, len(dfs)):
-        df = dfs[i]
-        dfs_out.append(
-            df[(df['Date'] >= dt_min) & (df['Date'] <= dt_max)].copy()
-        )
-    return dfs_out
+def drop_outof_dt_bounds(dt_min, dt_max, df):
+    df = df[(df['Date'] >= dt_min) & (df['Date'] <= dt_max)].copy()
+    return df
 
 
 def get_df_turbines(lst_turb):
@@ -167,8 +166,8 @@ def get_df_weather(lst_grid):
         df = df_red
     else:
         dt_min, dt_max = get_bounds_datetime(df_red, df_yellow)
-        df_red, df_yellow = \
-            drop_outof_dt_bounds(dt_min, dt_max, df_red, df_yellow)
+        df_red = drop_outof_dt_bounds(dt_min, dt_max, df_red)
+        df_yellow = drop_outof_dt_bounds(dt_min, dt_max, df_yellow)
 
         # GOT TO CHECK for same fc_hor
         df = pd.merge(df_red, df_yellow, on=['Date', 'fc_hor', 'grid_id']
@@ -202,9 +201,12 @@ def filter_weather_fc_hor(df, lst_da=[2]):
 
 def merge_df_turb_weather(df_turb, df_weather, lst_da=[2]):
     df_weather = filter_weather_fc_hor(df_weather, lst_da=lst_da)
+
     dt_min, dt_max = get_bounds_datetime(df_turb, df_weather)
-    df_turb, df_weather = drop_outof_dt_bounds(dt_min, dt_max,
-                                               df_turb, df_weather)
+
+    df_turb = drop_outof_dt_bounds(dt_min, dt_max, df_turb)
+    df_weather = drop_outof_dt_bounds(dt_min, dt_max, df_weather)
+
     df = pd.merge(df_turb, df_weather, on='Date', how='left')
 
     # NA values exists because some datetimes doesn't have a fc_hor in the
@@ -220,7 +222,6 @@ lst_col_model = ['RS', 'CAPE', 'SP', 'CP',
                  'TSRC', 'SSRC', 'STRC', 'TP', 'FA', 'U100', 'V100', 'vit_100',
                  'vit_10', 'dir_100', 'dir_10']
 
-
 lst_col_prev = ['Date', 'Eolienne', 'pred']
 
 dt_start_pred = datetime(2017, 1, 1, 0, 0)
@@ -228,7 +229,7 @@ dt_end_pred = datetime(2017, 4, 14, 23, 0)
 
 
 class model_ml:
-    def __init__(self, lst_turb=[1], lst_grid=[8, 9],
+    def __init__(self, lst_turb=[1, 2], lst_grid=[8, 9],
                  lst_da_train=[2],
                  lst_col_model=lst_col_model,
                  col_target='Production_mean_hour',
@@ -276,7 +277,7 @@ class model_ml:
                 lst_da=self.lst_da_test)
 
             self.df_train = merge_df_turb_weather(
-                df_tur=df_turb, df_weather=df_weather,
+                df_turb=df_turb, df_weather=df_weather,
                 lst_da=self.lst_da_train)
 
         else:
@@ -291,34 +292,29 @@ class model_ml:
         if kwargs != {}:
             print(kwargs)
 
-        if self.submit_mode:
-            self.compute_submit(modeltype=modeltype, **kwargs)
-        else:
-            model = modeltype(**kwargs)
+        model = modeltype(**kwargs)
 
-            print('Training ' + str(modeltype) + ' model ...')
-            model.fit(self.df_train[self.lst_col_model], self.df_train[self.col_target])
+        print('Training ' + str(modeltype) + ' model ...')
+        model.fit(self.df_train[self.lst_col_model], self.df_train[self.col_target])
 
-            print('Testing ' + str(modeltype) + ' model ...')
-            y_pred = model.predict(self.df_test[self.lst_col_model])
-            mae = mean_absolute_error(y_pred, self.df_test[self.col_target])
+        print('Predicting ' + str(modeltype) + ' model ...')
+        self.df_test['pred'] = model.predict(
+            self.df_test[self.lst_col_model])
+
+        if not self.submit_mode:
+            mae = mean_absolute_error(self.df_test['pred']
+                                      , self.df_test[self.col_target])
             self.scores.loc[self.scores.shape[0]] =\
                 [self.lst_turb, self.lst_grid, str(modeltype), kwargs, mae]
             return mae
 
 
-    def compute_submit(self, modeltype, **kwargs):
-        model = modeltype(**kwargs)
-        print('Training ' + str(modeltype) + ' model ...')
-        model.fit(self.df_train[self.lst_col_model], self.df_train[self.col_target])
-
-        print('Predicting ' + str(modeltype) + ' model ...')
-        self.df_test['pred'] = model.predict(self.df_test[self.lst_col_model])
-
-
     def compute_submit_nturb_models(self, modeltype, **kwargs):
         df_test = pd.DataFrame()
-        for nturb in range(1, 12):
+        if kwargs != {}:
+            print(kwargs)
+
+        for nturb in self.lst_turb:
             print('-------------------------------------------')
             df_train_tmp = self.df_train[self.df_train['Eolienne']
                                          == 'Turb' + str(nturb)].copy()
@@ -333,6 +329,14 @@ class model_ml:
             df_test = df_test.append(df_test_tmp)
 
         self.df_test = df_test
+
+        if not self.submit_mode:
+            mae = mean_absolute_error(self.df_test['pred']
+                                      , self.df_test[self.col_target])
+            self.scores.loc[self.scores.shape[0]] =\
+                [self.lst_turb, self.lst_grid, str(modeltype), kwargs, mae]
+            return mae
+
 
 
     def write_submit_csv(self):
@@ -391,8 +395,11 @@ if not os.path.isdir(results_dir):
 params_grad = {'n_estimators': 400, 'max_depth': 10, 'learning_rate': 0.1,
                'verbose': 1}
 
-# m = model_ml()
-m = model_ml(lst_da_train=[1])
+m = model_ml(lst_turb=range(1, 12), lst_grid=range(1,17))
+m.get_datas()
+df = m.df_train[ [m.col_target] + m.lst_col_model ]
+
+
 # m = model_ml(lst_turb=range(1, 12), lst_grid=[8, 9])
 # m = model_ml(submit_mode=True)
 # m.compute(LinearRegression)
