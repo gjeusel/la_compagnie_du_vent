@@ -20,10 +20,24 @@ from sklearn.metrics import mean_absolute_error
 
 from sklearn.linear_model import LinearRegression
 from sklearn import ensemble
+from xgboost import XGBRegressor
 
+from sklearn.model_selection import (train_test_split, cross_val_score,
+                                     GridSearchCV)
+
+from sklearn.pipeline import Pipeline
+from sklearn import decomposition
+from sklearn.feature_selection import SelectKBest, chi2
+
+# Personals files
 import plot
 import handle_datas
 
+
+# Constants for reproductability
+SEED = 314
+TEST_SIZE = 0.2
+MAX_EVALS = 100
 
 ##############################################
 # Global variables :
@@ -168,10 +182,18 @@ def get_df_weather(lst_grid):
         dt_min, dt_max = get_bounds_datetime(df_red, df_yellow)
         df_red = drop_outof_dt_bounds(dt_min, dt_max, df_red)
         df_yellow = drop_outof_dt_bounds(dt_min, dt_max, df_yellow)
+        from IPython import embed; embed() # Enter Ipython
 
-        # GOT TO CHECK for same fc_hor
-        df = pd.merge(df_red, df_yellow, on=['Date', 'fc_hor', 'grid_id']
+        # CHECK for same fc_hor ? filter right now
+        df_red = filter_weather_fc_hor(df_red)
+        df_yellow = filter_weather_fc_hor(df_yellow)
+
+        df = pd.merge(df_red, df_yellow, on=['Date', 'grid_id']
                       , how='left')
+        df.dropna(inplace=True)
+
+        # Astuce to keep generic function merge_df_turb_weather :
+        df = df.rename(columns={'fc_hor_x': 'fc_hor'})
 
     return df
 
@@ -216,11 +238,16 @@ def merge_df_turb_weather(df_turb, df_weather, lst_da=[2]):
     return df
 
 
-lst_col_model = ['RS', 'CAPE', 'SP', 'CP',
+lst_col_model_red = ['RS', 'CAPE', 'SP', 'CP',
                  'BLD', 'SSHF', 'SLHF', 'MSL', 'BLH', 'TCC', 'U10', 'V10', 'T2',
                  'D2', 'SSRD', 'STRD', 'SSR', 'STR', 'TSR', 'LCC', 'MCC', 'HCC',
                  'TSRC', 'SSRC', 'STRC', 'TP', 'FA', 'U100', 'V100', 'vit_100',
                  'vit_10', 'dir_100', 'dir_10']
+
+lst_col_model_yellow = ['TMP2m', 'VRH2m', 'UGRD10m',
+       'VGRD10m', 'W10m', 'Dir10m', 'TMP80m', 'PRES80m', 'UGRD80m',
+       'VGRD80m', 'W80m', 'Dir80m', 'TMP100m', 'UGRD100m', 'VGRD100m',
+       'W100m', 'Dir100m']
 
 # lst_col_model = ['SP', 'CP',
 #                  'BLD', 'SSHF', 'SLHF', 'MSL', 'BLH', 'TCC', 'U10', 'V10', 'T2',
@@ -235,9 +262,8 @@ dt_end_pred = datetime(2017, 4, 14, 23, 0)
 
 
 class model_ml:
-    def __init__(self, lst_turb=[1, 2], lst_grid=[8, 9],
-                 lst_da_train=[2],
-                 lst_col_model=lst_col_model,
+    def __init__(self, lst_turb=[1], lst_grid=[8, 9], lst_da_train=[2],
+                 lst_col_model=lst_col_model_red,
                  col_target='Production_mean_hour',
                  submit_mode=False):
 
@@ -262,11 +288,11 @@ class model_ml:
         self.col_target = col_target
 
 
-    def get_datas(self):
+    def get_datas(self, conveniance_fetch=True):
         print('Reading 2015-2016 parks csv ...')
         df_turb = get_df_turbines(lst_turb=self.lst_turb)
         print('Reading 2015-2017 weather csv ...')
-        df_weather = get_df_weather_red(lst_grid=self.lst_grid)
+        df_weather = get_df_weather(lst_grid=self.lst_grid)
 
         if self.submit_mode:
             # Preparing test sample for submit, only values with produc
@@ -287,10 +313,19 @@ class model_ml:
                 lst_da=self.lst_da_train)
 
         else:
-            from sklearn.model_selection import train_test_split
-            df = merge_df_turb_weather(df_turb, df_weather,
+            self.df = merge_df_turb_weather(df_turb, df_weather,
                                        lst_da=self.lst_da_train)
-            self.df_train, self.df_test = train_test_split(df, test_size=0.2)
+            self.df_train, self.df_test = train_test_split(
+                self.df, test_size=TEST_SIZE, random_state=SEED)
+
+            # Conveniance fetch :
+            if conveniance_fetch:
+                self.X = self.df[self.lst_col_model]
+                self.y = self.df[self.col_target]
+                self.X_train = self.df_train[self.lst_col_model]
+                self.y_train = self.df_train[self.col_target]
+                self.X_test = self.df_test[self.lst_col_model]
+                self.y_test = self.df_test[self.col_target]
 
 
     def filter_outliers(self, zscore_max_abs=3):
@@ -301,18 +336,31 @@ class model_ml:
         self.df_train.dropna(inplace=True)
 
 
-    def compute(self, modeltype, **kwargs):
+    def compute(self, modeltype, early_stopping_rounds=None, **kwargs):
         print('-------------------------------------------')
         if kwargs != {}:
             print(kwargs)
 
-        model = modeltype(**kwargs)
+        self.model = modeltype(**kwargs)
 
-        print('Training ' + str(modeltype) + ' model ...')
-        model.fit(self.df_train[self.lst_col_model], self.df_train[self.col_target])
+        if early_stopping_rounds == None:
+            print('Training ' + str(modeltype) + ' model ...')
+            self.model.fit(self.df_train[self.lst_col_model],
+                           self.df_train[self.col_target])
+        else:
+            print('Training ' + str(modeltype) +
+                  ' model with early_stopping_rounds = ' +
+                  str(early_stopping_rounds) + '...')
+
+            self.model.fit(self.df_train[self.lst_col_model],
+                           self.df_train[self.col_target],
+                           early_stopping_rounds=early_stopping_rounds,
+                           eval_set=[(self.df_test[self.lst_col_model],
+                                      self.df_test[self.col_target])],
+                           verbose=2)
 
         print('Predicting ' + str(modeltype) + ' model ...')
-        self.df_test['pred'] = model.predict(
+        self.df_test['pred'] = self.model.predict(
             self.df_test[self.lst_col_model])
 
         if not self.submit_mode:
@@ -352,7 +400,6 @@ class model_ml:
             return mae
 
 
-
     def write_submit_csv(self):
         now = datetime.now()
         fname_out = results_dir + 'lcv_submit_GJ_' + str(now.day) +\
@@ -364,18 +411,32 @@ class model_ml:
         df.to_csv(fname_out, sep=';', index=False)
 
 
-    def param_study_grad(self):
-        learning_rate_arr = np.arange(0.1, 0.5, 0.1)
-        n_estimators_arr = np.arange(400, 500, 100)
-        max_depth_arr = np.arange(8, 20, 2)
+    def train_grid_search(self, model_ml_type=XGBRegressor):
 
-        for learning_rate in learning_rate_arr:
-            for n_estimators in n_estimators_arr:
-                for max_depth in max_depth_arr:
-                    params = {'learning_rate': learning_rate,
-                              'n_estimators': n_estimators,
-                              'max_depth': max_depth}
-                    self.compute(ensemble.GradientBoostingRegressor, **params)
+        pipe = Pipeline([
+            ('reduce_dim', decomposition.PCA()),
+            ('regressor', model_ml_type())
+        ])
+
+        N_FEATURES_OPTIONS = [24, 27, 29, 31, 33]
+        param_grid = [
+            {
+                'reduce_dim': [decomposition.PCA()],
+                'reduce_dim__n_components': N_FEATURES_OPTIONS,
+                'regressor__max_depth': [4, 6, 10, 15],
+                'regressor__n_estimators': [10, 50, 100, 500],
+                'regressor__learning_rate': [0.01, 0.025, 0.05, 0.1],
+                'regressor__gamma': [0.05, 0.5, 0.9, 1.]
+            },
+        ]
+
+        grid = GridSearchCV(pipe, cv=5, verbose=2, n_jobs=4,
+                            param_grid=param_grid,
+                            scoring='neg_mean_absolute_error')
+        grid.fit(self.df[self.lst_col_model],
+                 self.df[self.col_target])
+
+        self.grid = grid
 
 
     def param_study_lst_grid(self,
@@ -383,16 +444,14 @@ class model_ml:
         from sklearn.model_selection import train_test_split
         from itertools import combinations
         df_turb = get_df_turbines(lst_turb=[1])
-        self.scores = pd.DataFrame(columns=['lst_turb', 'lst_grid',
-                                            'Model', 'Params', 'MAE'])
-        for n_grid in range(1, 17):
+        for n_grid in range(1, 5):
             for lst in combinations(range(1, 17), n_grid):
+                print 'Computing for lst = ' + str(lst)
                 self.lst_grid = lst
                 df_weather = get_df_weather(lst_grid=lst)
                 df = merge_df_turb_weather(df_turb, df_weather)
                 self.df_train, self.df_test = train_test_split(df, test_size=0.2)
                 self.compute(ensemble.GradientBoostingRegressor, verbose=1)
-
 
 
 
@@ -409,16 +468,68 @@ if not os.path.isdir(results_dir):
 params_grad = {'n_estimators': 400, 'max_depth': 10, 'learning_rate': 0.1,
                'verbose': 1}
 
+params_xgboost = {'n_estimators': 2000, 'learning_rate': 0.05,
+                  'nthread': 4, 'subsample': 0.5}
+
 # m = model_ml(lst_turb=range(1, 12), lst_grid=range(1,17))
-m = model_ml()
+
+# df = m.df_train[ [m.col_target] + m.lst_col_model ]
+
+naive_cv_parameters = {'max_depth':[4, 6, 8, 10],
+                       'n_estimators': [10, 15, 20, 25],
+                       'learning_rate': [0.2, 0.4, 0.6, 0.8],
+                       'gamma': [0.2, 0.4, 0.6, 0.8]
+                       }
+
+test_cv_parameters = {'max_depth':[4],
+                       'n_estimators': [10, 15],
+                       'learning_rate': [0.2],
+                       }
+
+expert_cv_parameters = {'max_depth':[4, 6, 10, 15],
+                        'n_estimators': [10, 50, 100, 500],
+                        'learning_rate': [0.01, 0.025, 0.05, 0.1],
+                        'gamma': [0.05, 0.5, 0.9, 1.]}
+
+
+m = model_ml(lst_turb=[1], lst_grid=[8,11], lst_da_train=[2])
 m.get_datas()
-df = m.df_train[ [m.col_target] + m.lst_col_model ]
+
+# train_X = m.df_train[m.lst_col_model]
+# train_y = m.df_train[m.col_target]
+
+# test_X = m.df_test[m.lst_col_model]
+# test_y = m.df_test[m.col_target]
 
 
-# m = model_ml(lst_turb=range(1, 12), lst_grid=[8, 9])
-# m = model_ml(submit_mode=True)
-# m.compute(LinearRegression)
-# m.compute(ensemble.GradientBoostingRegressor, **params_grad)
+# df_weather = get_df_weather_red(lst_grid=[8])
+# df_turb = get_df_turbines(lst_turb=[1])
+# df = merge_df_turb_weather(df_turb, df_weather)
 
-# df_weather = get_df_weather([1,2])
-# df_turb = get_df_turbines([1,3])
+# X = df[lst_col_model_red]
+# y = df['Production_mean_hour']
+
+
+# pipe = Pipeline([
+#     ('reduce_dim', decomposition.PCA()),
+#     ('regressor', XGBRegressor())
+# ])
+
+# N_FEATURES_OPTIONS = [2, 14, 24, 32]
+# C_OPTIONS = [1, 10, 100, 1000]
+# param_grid = [
+#     {
+#         'reduce_dim': [decomposition.PCA()],
+#         'reduce_dim__n_components': N_FEATURES_OPTIONS,
+#         'regressor__max_depth': [4],
+#         'regressor__n_estimators': [10, 15],
+#         'regressor__learning_rate': [0.5, 1.],
+#     },
+# ]
+
+
+# # Parameters of pipelines can be set using ‘__’ separated parameter names:
+# grid = GridSearchCV(pipe, cv=3, n_jobs=4,
+#                     param_grid=param_grid,
+#                     verbose=2)
+# # grid.fit(X, y)
