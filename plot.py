@@ -116,8 +116,23 @@ def horizontal_boxplot(df):
 
 
 def get_distrib_barplot(df):
+    sns.set(style="ticks")
+    # Initialize the figure with a logarithmic x axis
+    f, ax = plt.subplots(figsize=(20,20))
 
-    pass
+    df_norm = (df - df.mean()) / (df.max() - df.min())
+
+    sns.boxplot(data=df_norm,
+                orient='h',
+                # whis=whis # Proportion of the IQR past the low and high quartiles to extend the plot whiskers. Points outside this range will be identified as outliers.
+                )
+
+    # Tweak the visual presentation
+    ax.xaxis.grid(True)
+    ax.set(ylabel="")
+    sns.despine(trim=True, left=True)
+
+    return fig, ax
 
 # def get_pca(X, y, n_components):
 #     from sklearn.decomposition import PCA
