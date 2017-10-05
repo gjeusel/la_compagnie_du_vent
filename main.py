@@ -255,10 +255,17 @@ lst_col_model_yellow = ['TMP2m', 'VRH2m', 'UGRD10m',
 #                  'STRC', 'TP', 'FA', 'U100', 'V100', 'vit_100',
 #                  'vit_10', 'dir_100', 'dir_10']
 
-lst_col_prev = ['Date', 'Eolienne', 'pred']
-
 dt_start_pred = datetime(2017, 1, 1, 0, 0)
 dt_end_pred = datetime(2017, 4, 14, 23, 0)
+
+def param_xgboost_to_pipe(basename='regressor', **param_xgboost):
+    if not bool(param_xgboost):  # empty dict are evaluated to False in python
+        return {}
+    else:
+        param_grid = {}
+        for var_name in param_xgboost:
+            param_grid[basename+'__'+var_name] = param_xgboost[var_name]
+        return param_grid
 
 
 class model_ml:
@@ -336,7 +343,7 @@ class model_ml:
         self.df_train.dropna(inplace=True)
 
 
-    def compute(self, modeltype, early_stopping_rounds=None, **kwargs):
+    def compute(self, modeltype=XGBRegressor, early_stopping_rounds=None, **kwargs):
         print('-------------------------------------------')
         if kwargs != {}:
             print(kwargs)
@@ -346,7 +353,8 @@ class model_ml:
         if early_stopping_rounds == None:
             print('Training ' + str(modeltype) + ' model ...')
             self.model.fit(self.df_train[self.lst_col_model],
-                           self.df_train[self.col_target])
+                           self.df_train[self.col_target],
+                           verbose=2)
         else:
             print('Training ' + str(modeltype) +
                   ' model with early_stopping_rounds = ' +
@@ -411,28 +419,33 @@ class model_ml:
         df.to_csv(fname_out, sep=';', index=False)
 
 
-    def train_grid_search(self, model_ml_type=XGBRegressor):
+    def train_grid_search(self, param_xgboost, model_ml_type=XGBRegressor):
 
         pipe = Pipeline([
-            ('reduce_dim', decomposition.PCA()),
+            # ('reduce_dim', decomposition.PCA()),
             ('regressor', model_ml_type())
         ])
 
-        N_FEATURES_OPTIONS = [24, 27, 29, 31, 33]
-        param_grid = [
-            {
-                'reduce_dim': [decomposition.PCA()],
-                'reduce_dim__n_components': N_FEATURES_OPTIONS,
-                'regressor__max_depth': [4, 6, 10, 15],
-                'regressor__n_estimators': [10, 50, 100, 500],
-                'regressor__learning_rate': [0.01, 0.025, 0.05, 0.1],
-                'regressor__gamma': [0.05, 0.5, 0.9, 1.]
-            },
-        ]
+        # N_FEATURES_OPTIONS = [24, 27, 29, 31, 33]
+        # param_grid = [
+        #     {
+        #         # 'reduce_dim': [decomposition.PCA()],
+        #         # 'reduce_dim__n_components': N_FEATURES_OPTIONS,
+        #         'regressor__max_depth': [4, 6, 10, 15],
+        #         'regressor__n_estimators': [10, 50, 100, 500],
+        #         'regressor__learning_rate': [0.01, 0.025, 0.05, 0.1],
+        #         'regressor__gamma': [0.05, 0.5, 0.9, 1.]
+        #     },
+        # ]
 
-        grid = GridSearchCV(pipe, cv=5, verbose=2, n_jobs=4,
+        param_grid = param_xgboost_to_pipe(param_xgboost)
+        # fit_params = {'regressor__early_stopping_rounds': 5}
+
+        grid = GridSearchCV(pipe, cv=5, verbose=2, n_jobs=3,
                             param_grid=param_grid,
-                            scoring='neg_mean_absolute_error')
+                            scoring='neg_mean_absolute_error',  #mean_absolute_error
+                            # fit_params=fit_params,
+                            )
         grid.fit(self.df[self.lst_col_model],
                  self.df[self.col_target])
 
@@ -489,7 +502,8 @@ test_cv_parameters = {'max_depth':[4],
 expert_cv_parameters = {'max_depth':[4, 6, 10, 15],
                         'n_estimators': [10, 50, 100, 500],
                         'learning_rate': [0.01, 0.025, 0.05, 0.1],
-                        'gamma': [0.05, 0.5, 0.9, 1.]}
+                        'gamma': [0.05, 0.5, 0.9, 1.], # Minimum loss reduction required to make a further partition on a leaf node of the tree
+                        }
 
 
 m = model_ml(lst_turb=[1], lst_grid=[8,11], lst_da_train=[2])
@@ -508,28 +522,3 @@ m.get_datas()
 
 # X = df[lst_col_model_red]
 # y = df['Production_mean_hour']
-
-
-# pipe = Pipeline([
-#     ('reduce_dim', decomposition.PCA()),
-#     ('regressor', XGBRegressor())
-# ])
-
-# N_FEATURES_OPTIONS = [2, 14, 24, 32]
-# C_OPTIONS = [1, 10, 100, 1000]
-# param_grid = [
-#     {
-#         'reduce_dim': [decomposition.PCA()],
-#         'reduce_dim__n_components': N_FEATURES_OPTIONS,
-#         'regressor__max_depth': [4],
-#         'regressor__n_estimators': [10, 15],
-#         'regressor__learning_rate': [0.5, 1.],
-#     },
-# ]
-
-
-# # Parameters of pipelines can be set using ‘__’ separated parameter names:
-# grid = GridSearchCV(pipe, cv=3, n_jobs=4,
-#                     param_grid=param_grid,
-#                     verbose=2)
-# # grid.fit(X, y)
