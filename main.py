@@ -120,7 +120,7 @@ def get_df_turb_2017():
     return df_turb_2017
 
 
-def get_df_weather_red(lst_grid):
+def get_df_weather(lst_grid, year=None):
     if not all(num_grid > 0 for num_grid in lst_grid):
         raise Exception('Error in get_df_weather_red : grid_id are only positives')
     elif len(lst_grid) == 0:
@@ -128,8 +128,12 @@ def get_df_weather_red(lst_grid):
 
     df_weather = pd.DataFrame()
     for num_grid in lst_grid:
-        fname_in_grid = data_reformated_dir + 'PrevMeteo_Grille' +\
-                        str(num_grid) + '.csv'
+        if year == '2017':
+            fname_in_grid = data_reformated_dir + 'PrevMeteo_Grille' +\
+                            str(num_grid) + '_2017' + '.csv'
+        else:
+            fname_in_grid = data_reformated_dir + 'PrevMeteo_Grille' +\
+                            str(num_grid) + '.csv'
 
         df_tmp = pd.read_csv(fname_in_grid, sep=';')
         df_tmp['grid_id'] = pd.Series(num_grid, index=df_tmp.index)
@@ -145,60 +149,7 @@ def get_df_weather_red(lst_grid):
     return df_weather
 
 
-def get_df_weather_yellow(lst_grid):
-    if not all(num_grid < 0 for num_grid in lst_grid):
-        raise Exception('Error in get_df_weather_yellow : grid_id are only negatives')
-    elif len(lst_grid) == 0:
-        return pd.DataFrame()
-
-    df_weather = pd.DataFrame()
-    for num_grid in lst_grid:
-        fname_in_grid = data_reformated_dir + 'PrevMeteo_Grille' +\
-                        str(num_grid) + '.csv'
-
-        df_tmp = pd.read_csv(fname_in_grid, sep=';')
-        df_tmp['grid_id'] = pd.Series(num_grid, index=df_tmp.index)
-
-        df_weather = df_weather.append(df_tmp)
-
-    df_weather['Date'] = pd.to_datetime(df_weather['Date'], format="%Y-%m-%d %H:%M:%S")
-
-    df_weather = set_column_sequence(df_weather, ['Date', 'fc_hor', 'grid_id'])
-    df_weather.sort_values(by=['Date', 'fc_hor', 'grid_id'],
-                           ascending=[True, True, True],
-                           inplace=True)
-    return df_weather
-
-
-def get_df_weather(lst_grid):
-    df_red = get_df_weather_red([n for n in lst_grid if n > 0])
-    df_yellow = get_df_weather_yellow([n for n in lst_grid if n < 0])
-
-    if (df_red.empty):
-        df = df_yellow
-    elif (df_yellow.empty):
-        df = df_red
-    else:
-        dt_min, dt_max = get_bounds_datetime(df_red, df_yellow)
-        df_red = drop_outof_dt_bounds(dt_min, dt_max, df_red)
-        df_yellow = drop_outof_dt_bounds(dt_min, dt_max, df_yellow)
-        from IPython import embed; embed() # Enter Ipython
-
-        # CHECK for same fc_hor ? filter right now
-        df_red = filter_weather_fc_hor(df_red)
-        df_yellow = filter_weather_fc_hor(df_yellow)
-
-        df = pd.merge(df_red, df_yellow, on=['Date', 'grid_id']
-                      , how='left')
-        df.dropna(inplace=True)
-
-        # Astuce to keep generic function merge_df_turb_weather :
-        df = df.rename(columns={'fc_hor_x': 'fc_hor'})
-
-    return df
-
-
-def filter_weather_fc_hor(df, lst_da=[2]):
+def filter_fc_hor(df, lst_da=[2]):
     # Rem :
     # The aim of this challenge is to predict the Production of tomorrow.
     # So only forecast (fc_hor) between 25h and 47h can be used to predict:
@@ -222,7 +173,7 @@ def filter_weather_fc_hor(df, lst_da=[2]):
 
 
 def merge_df_turb_weather(df_turb, df_weather, lst_da=[2]):
-    df_weather = filter_weather_fc_hor(df_weather, lst_da=lst_da)
+    df_weather = filter_fc_hor(df_weather, lst_da=lst_da)
 
     dt_min, dt_max = get_bounds_datetime(df_turb, df_weather)
 
@@ -295,15 +246,14 @@ class model_ml:
         self.col_target = col_target
 
 
-    def get_datas(self, conveniance_fetch=True):
-        print('Reading 2015-2016 parks csv ...')
-        df_turb = get_df_turbines(lst_turb=self.lst_turb)
-        print('Reading 2015-2017 weather csv ...')
-        df_weather = get_df_weather(lst_grid=self.lst_grid)
+    def get_datas_2017(self):
+            # dt_start_pred < dt < dt_end_pred :
+            print('Reading 2017 weather csv ...')
+            df_weather_2017 = get_df_weather(lst_grid=self.lst_grid,
+                                             year='2017')
+            df_weather_2017 = drop_outof_dt_bounds(
+                dt_start_pred, dt_end_pred, df_weather_2017)
 
-        if self.submit_mode:
-            # Preparing test sample for submit, only values with produc
-            # constraints and dt_start_pred < dt < dt_end_pred :
             print('Reading 2017 parks csv ...')
             df_turb_2017 = get_df_turb_2017()
             df_turb_2017 = drop_outof_dt_bounds(
@@ -311,28 +261,42 @@ class model_ml:
 
             # Production constraints : can only predict with forecast 1da
             # meaning fc_hor >= 24 & fc_hor <= 47   cf. self.lst_da_test
-            self.df_test = merge_df_turb_weather(
-                df_turb=df_turb_2017, df_weather=df_weather,
+            self.df_2017 = merge_df_turb_weather(
+                df_turb=df_turb_2017, df_weather=df_weather_2017,
                 lst_da=self.lst_da_test)
 
-            self.df_train = merge_df_turb_weather(
-                df_turb=df_turb, df_weather=df_weather,
-                lst_da=self.lst_da_train)
+
+    def get_datas(self, conveniance_fetch=False):
+        print('Reading 2015 & 2016 parks csv ...')
+        df_turb = get_df_turbines(lst_turb=self.lst_turb)
+        print('Reading 2015 & 2016 weather csv ...')
+        df_weather = get_df_weather(lst_grid=self.lst_grid)
+
+        self.df = merge_df_turb_weather(
+            df_turb=df_turb, df_weather=df_weather,
+            lst_da=[1,2,3])
+
+        if self.submit_mode:
+            # Train set :
+            self.df_train = filter_fc_hor(self.df,
+                                                  lst_da=self.lst_da_train)
+            # Test set :
+            self.get_datas_2017()
+            self.df_test = self.df_2017
 
         else:
-            self.df = merge_df_turb_weather(df_turb, df_weather,
-                                       lst_da=self.lst_da_train)
+            # Train - Test split :
             self.df_train, self.df_test = train_test_split(
                 self.df, test_size=TEST_SIZE, random_state=SEED)
 
-            # Conveniance fetch :
-            if conveniance_fetch:
-                self.X = self.df[self.lst_col_model]
-                self.y = self.df[self.col_target]
-                self.X_train = self.df_train[self.lst_col_model]
-                self.y_train = self.df_train[self.col_target]
-                self.X_test = self.df_test[self.lst_col_model]
-                self.y_test = self.df_test[self.col_target]
+        # Conveniance fetch :
+        if conveniance_fetch:
+            self.X = self.df[self.lst_col_model]
+            self.y = self.df[self.col_target]
+            self.X_train = self.df_train[self.lst_col_model]
+            self.y_train = self.df_train[self.col_target]
+            self.X_test = self.df_test[self.lst_col_model]
+            self.y_test = self.df_test[self.col_target]
 
 
     def filter_outliers(self, zscore_max_abs=3):
@@ -354,7 +318,8 @@ class model_ml:
             print('Training ' + str(modeltype) + ' model ...')
             self.model.fit(self.df_train[self.lst_col_model],
                            self.df_train[self.col_target],
-                           verbose=2)
+                           verbose=True,
+                           )
         else:
             print('Training ' + str(modeltype) +
                   ' model with early_stopping_rounds = ' +
@@ -365,7 +330,8 @@ class model_ml:
                            early_stopping_rounds=early_stopping_rounds,
                            eval_set=[(self.df_test[self.lst_col_model],
                                       self.df_test[self.col_target])],
-                           verbose=2)
+                           verbose=True,
+                           )
 
         print('Predicting ' + str(modeltype) + ' model ...')
         self.df_test['pred'] = self.model.predict(
@@ -419,9 +385,10 @@ class model_ml:
         df.to_csv(fname_out, sep=';', index=False)
 
 
-    def train_grid_search(self, param_xgboost, model_ml_type=XGBRegressor):
+    def train_grid_search(self, param_xgboost, n_jobs=3,
+                          model_ml_type=XGBRegressor):
 
-        pipe = Pipeline([
+        pipe = Pipeline(steps=[
             # ('reduce_dim', decomposition.PCA()),
             ('regressor', model_ml_type())
         ])
@@ -438,34 +405,27 @@ class model_ml:
         #     },
         # ]
 
-        param_grid = param_xgboost_to_pipe(param_xgboost)
-        # fit_params = {'regressor__early_stopping_rounds': 5}
+        param_grid = param_xgboost_to_pipe(**param_xgboost)
+        fit_params = {'regressor__early_stopping_rounds': 20,
+                      'regressor__eval_set': [
+                          (self.df_test[self.lst_col_model],
+                           self.df_test[self.col_target])],
+                     }
 
-        grid = GridSearchCV(pipe, cv=5, verbose=2, n_jobs=3,
+        grid = GridSearchCV(pipe, cv=5, verbose=2, n_jobs=n_jobs,
                             param_grid=param_grid,
                             scoring='neg_mean_absolute_error',  #mean_absolute_error
-                            # fit_params=fit_params,
+                            fit_params=fit_params,
                             )
-        grid.fit(self.df[self.lst_col_model],
-                 self.df[self.col_target])
+        grid.fit(self.df_train[self.lst_col_model],
+                 self.df_train[self.col_target])
 
         self.grid = grid
 
 
-    def param_study_lst_grid(self,
-                             modeltype=ensemble.GradientBoostingRegressor):
-        from sklearn.model_selection import train_test_split
-        from itertools import combinations
-        df_turb = get_df_turbines(lst_turb=[1])
-        for n_grid in range(1, 5):
-            for lst in combinations(range(1, 17), n_grid):
-                print 'Computing for lst = ' + str(lst)
-                self.lst_grid = lst
-                df_weather = get_df_weather(lst_grid=lst)
-                df = merge_df_turb_weather(df_turb, df_weather)
-                self.df_train, self.df_test = train_test_split(df, test_size=0.2)
-                self.compute(ensemble.GradientBoostingRegressor, verbose=1)
-
+    def feature_engineering(self):
+        # Let's try a mean in dir_xx
+        pass
 
 
 # Some checks :
@@ -478,16 +438,6 @@ if not os.path.isdir(data_reformated_dir):
 if not os.path.isdir(results_dir):
     os.makedirs(results_dir)
 
-params_grad = {'n_estimators': 400, 'max_depth': 10, 'learning_rate': 0.1,
-               'verbose': 1}
-
-params_xgboost = {'n_estimators': 2000, 'learning_rate': 0.05,
-                  'nthread': 4, 'subsample': 0.5}
-
-# m = model_ml(lst_turb=range(1, 12), lst_grid=range(1,17))
-
-# df = m.df_train[ [m.col_target] + m.lst_col_model ]
-
 naive_cv_parameters = {'max_depth':[4, 6, 8, 10],
                        'n_estimators': [10, 15, 20, 25],
                        'learning_rate': [0.2, 0.4, 0.6, 0.8],
@@ -495,8 +445,8 @@ naive_cv_parameters = {'max_depth':[4, 6, 8, 10],
                        }
 
 test_cv_parameters = {'max_depth':[4],
-                       'n_estimators': [10, 15],
-                       'learning_rate': [0.2],
+                      'n_estimators': [10, 15],
+                      'learning_rate': [0.2],
                        }
 
 expert_cv_parameters = {'max_depth':[4, 6, 10, 15],
@@ -506,19 +456,6 @@ expert_cv_parameters = {'max_depth':[4, 6, 10, 15],
                         }
 
 
-m = model_ml(lst_turb=[1], lst_grid=[8,11], lst_da_train=[2])
+# m = model_ml(lst_turb=range(1, 12), lst_grid=range(1,17))
+m = model_ml(lst_turb=[1], lst_grid=[6,7,8,11], lst_da_train=[2])
 m.get_datas()
-
-# train_X = m.df_train[m.lst_col_model]
-# train_y = m.df_train[m.col_target]
-
-# test_X = m.df_test[m.lst_col_model]
-# test_y = m.df_test[m.col_target]
-
-
-# df_weather = get_df_weather_red(lst_grid=[8])
-# df_turb = get_df_turbines(lst_turb=[1])
-# df = merge_df_turb_weather(df_turb, df_weather)
-
-# X = df[lst_col_model_red]
-# y = df['Production_mean_hour']

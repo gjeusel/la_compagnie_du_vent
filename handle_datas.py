@@ -26,6 +26,8 @@ park_col_type = {
              'Production_mean_hour']
 }
 
+dt_start_pred = datetime(2017, 1, 1, 0, 0)
+dt_end_pred = datetime(2017, 4, 14, 23, 0)
 
 # Function from ipython notebook : reading ParcX_20XX.csv
 def create_df_park_data(list_num_park, list_date_park):
@@ -88,7 +90,10 @@ def reformate_PrevMeteo_excel(sep=';'):
     for i in range(1, 17):
         fname_in = data_dir + 'PrevMeteo_Grille'+str(i)+'.xlsx'
         fname_out = data_reformated_dir + 'PrevMeteo_Grille'+str(i)+'.csv'
-        print('Converting ' + fname_in + ' into ' + fname_out + ' ...')
+        fname_out_2017 = data_reformated_dir + 'PrevMeteo_Grille'+str(i) +\
+            '_2017'+'.csv'
+        print('Converting ' + fname_in + ' into :\n' + fname_out +
+              '\n' + fname_out_2017 + '...')
 
         df = pd.read_excel(fname_in, sheetname='Feuil1', header=0)
         # Not Needed to change datetimes because already in GMT+00
@@ -104,60 +109,18 @@ def reformate_PrevMeteo_excel(sep=';'):
         df['date'] = df['date'].apply(lambda x: x + timedelta(hours=1))
 
         # Keeping only registers for which datetime <= 14/04/2017 23:00 (of no use)
-        df = df[df['date'] <= datetime(2017, 4, 14, 23)]
+        df = df[df['date'] <= dt_end_pred]
 
         # Renaming for same column label as ParcX_20XX.csv :
         df = df.rename(columns={'date': 'Date'})
 
-        df.to_csv(fname_out, sep=sep, index=False)
+        # 2015 - 2016 :
+        df_2015_2016 = df[df['Date'] < dt_start_pred]
+        df_2015_2016.to_csv(fname_out, sep=sep, index=False)
 
-
-def reformate_PrevMeteo2(sep=';'):
-    print('Reformating PrevMeteo2_16pointsGrille.csv ...')
-    df = pd.read_csv(data_dir + 'PrevMeteo2_16pointsGrille.csv', sep=sep,
-                     decimal=',')
-
-    # No Daylight Saving Time (DST) gap so assumed in GMT+00
-    # Convert datetime GMT+00 into datetime GMT+01:
-    # Get a SegFault on Linux :
-    # df['date'] = df['date'].apply(lambda x: datetime
-    #                             .strptime(x, '%d/%m/%Y %H:%M')
-    #                             .replace(tzinfo=tz.gettz('GMT+00'))
-    #                             .astimezone(tz.gettz('GMT+01')))
-    df['Date'] = pd.to_datetime(df['Date'], format="%d/%m/%Y %H:%M")
-    df['Date'] = df['Date'].apply(lambda x: x + timedelta(hours=1))
-
-    # Renaming 'horizon' to 'fc_hor' for uniformization with PrevMeteo_Grille#
-    df = df.rename(columns={'horizon': 'fc_hor'})
-
-    # Keeping only registers for which datetime <= 14/04/2017 23:00 (of no use)
-    df = df[df['Date'] <= datetime(2017, 4, 14, 23)]
-
-    for i in range(1, 17):
-        lst_cols = ['Date', 'fc_hor', 'Run']
-        lst_cols = lst_cols + [
-            'TMP2m_'+str(i), 'VRH2m_'+str(i), 'UGRD10m_'+str(i),
-            'VGRD10m_'+str(i), 'W10m_'+str(i), 'Dir10m_'+str(i),
-            'TMP80m_'+str(i), 'PRES80m_'+str(i), 'UGRD80m_'+str(i),
-            'VGRD80m_'+str(i), 'W80m_'+str(i), 'Dir80m_'+str(i),
-            'TMP100m_'+str(i), 'UGRD100m_'+str(i), 'VGRD100m_'+str(i),
-            'W100m_'+str(i), 'Dir100m_'+str(i)
-        ]
-
-        df_tmp = df[lst_cols]
-
-        lst_cols_names = ['Date', 'fc_hor', 'Run',
-            'TMP2m', 'VRH2m', 'UGRD10m', 'VGRD10m', 'W10m', 'Dir10m',
-            'TMP80m', 'PRES80m', 'UGRD80m', 'VGRD80m', 'W80m', 'Dir80m',
-            'TMP100m', 'UGRD100m', 'VGRD100m', 'W100m', 'Dir100m'
-        ]
-
-        dict_names = dict(zip(lst_cols, lst_cols_names))
-        df_tmp = df_tmp.rename(columns=dict_names)
-
-        fname_out = data_reformated_dir+'PrevMeteo_Grille'+str(-i)+'.csv'
-        print('Writting ' + fname_out)
-        df_tmp.to_csv(fname_out, sep=sep, index=False)
+        # 2017
+        df_2017 = df[df['Date'] >= dt_start_pred]
+        df_2017.to_csv(fname_out_2017, sep=sep, index=False)
 
 
 def reformate_all_data():
@@ -165,7 +128,6 @@ def reformate_all_data():
                        list_date_park=['2015', '2016'])
 
     reformate_PrevMeteo_excel()
-    reformate_PrevMeteo2()
     return
 
 
