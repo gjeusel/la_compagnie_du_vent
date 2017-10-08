@@ -21,6 +21,7 @@ from sklearn.metrics import mean_absolute_error
 from sklearn.linear_model import LinearRegression
 from sklearn import ensemble
 from xgboost import XGBRegressor
+from xgboost import plot_importance
 
 from sklearn.model_selection import (train_test_split, cross_val_score,
                                      GridSearchCV)
@@ -195,10 +196,6 @@ lst_col_model_red = ['RS', 'CAPE', 'SP', 'CP',
                  'TSRC', 'SSRC', 'STRC', 'TP', 'FA', 'U100', 'V100', 'vit_100',
                  'vit_10', 'dir_100', 'dir_10']
 
-lst_col_model_yellow = ['TMP2m', 'VRH2m', 'UGRD10m',
-       'VGRD10m', 'W10m', 'Dir10m', 'TMP80m', 'PRES80m', 'UGRD80m',
-       'VGRD80m', 'W80m', 'Dir80m', 'TMP100m', 'UGRD100m', 'VGRD100m',
-       'W100m', 'Dir100m']
 
 # lst_col_model = ['SP', 'CP',
 #                  'BLD', 'SSHF', 'SLHF', 'MSL', 'BLH', 'TCC', 'U10', 'V10', 'T2',
@@ -266,7 +263,7 @@ class model_ml:
                 lst_da=self.lst_da_test)
 
 
-    def get_datas(self, conveniance_fetch=False):
+    def get_datas(self):
         print('Reading 2015 & 2016 parks csv ...')
         df_turb = get_df_turbines(lst_turb=self.lst_turb)
         print('Reading 2015 & 2016 weather csv ...')
@@ -276,10 +273,16 @@ class model_ml:
             df_turb=df_turb, df_weather=df_weather,
             lst_da=[1,2,3])
 
+        self.df = set_column_sequence(
+            self.df,
+            ['Date', 'Production_mean_hour', 'fc_hor', 'grid_id', 'Eolienne'])
+
+
+    def split_train_test(self, conveniance_fetch=True):
+
         if self.submit_mode:
             # Train set :
-            self.df_train = filter_fc_hor(self.df,
-                                                  lst_da=self.lst_da_train)
+            self.df_train = filter_fc_hor(self.df, lst_da=self.lst_da_train)
             # Test set :
             self.get_datas_2017()
             self.df_test = self.df_2017
@@ -424,9 +427,30 @@ class model_ml:
 
 
     def feature_engineering(self):
-        # Let's try a mean in dir_xx
-        pass
+        # Add fc_hor and grid_id to the model :
+        self.lst_col_model += ['fc_hor', 'grid_id']
 
+        # Let's take into account Datetime
+        self.df['month'] = self.df['Date'].apply(lambda x: x.month)
+        self.df['day'] = self.df['Date'].apply(lambda x: x.day)
+        self.df['hour'] = self.df['Date'].apply(lambda x: x.hour)
+        self.lst_col_model += ['month', 'day', 'hour']
+
+        # # Combine fc_hor and hour
+        # self.df['delta_hour_fc_hor'] = self.df['fc_hor'] - self.df['hour']
+        # self.lst_col_model += ['delta_hour_fc_hor']
+        # self.lst_col_model.remove('hour')
+        # self.lst_col_model.remove('fc_hor')
+
+        # Doing a sum for the booleans cloud cover :
+        self.df['cloud_cover'] = self.df[['LCC', 'MCC', 'HCC']].sum(axis=1)
+        self.lst_col_model = [x for x in self.lst_col_model if x not in
+                            ['LCC', 'MCC', 'HCC']]
+        self.lst_col_model += ['cloud_cover']
+
+        # Delete some not important variables :
+        self.lst_col_model = [x for x in self.lst_col_model if x not in
+                            ['SSRD', 'TSR', 'TSRC']]
 
 # Some checks :
 if not os.path.isdir(data_dir):
