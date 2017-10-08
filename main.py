@@ -83,8 +83,8 @@ def get_bounds_datetime(df1, df2, *dfs):
 
 
 def drop_outof_dt_bounds(dt_min, dt_max, df):
-    df = df[(df['Date'] >= dt_min) & (df['Date'] <= dt_max)].copy()
-    return df
+    df_tmp = df[(df['Date'] >= dt_min) & (df['Date'] <= dt_max)]
+    return df_tmp
 
 
 def get_df_turbines(lst_turb):
@@ -150,7 +150,7 @@ def get_df_weather(lst_grid, year=None):
     return df_weather
 
 
-def filter_fc_hor(df, lst_da=[2]):
+def filter_fc_hor(df, lst_col_to_group=['Date', 'grid_id'], lst_da=[2]):
     # Rem :
     # The aim of this challenge is to predict the Production of tomorrow.
     # So only forecast (fc_hor) between 25h and 47h can be used to predict:
@@ -163,12 +163,12 @@ def filter_fc_hor(df, lst_da=[2]):
         if da_num == 3:
             df_tmp = df_tmp.append( df[(df['fc_hor'] >= 48 )] )
 
+    # Append doesn't identify common Date & grid_id, need to groupby :
     if len(lst_da) > 1:
-        df_tmp = df_tmp.groupby(['Date', 'grid_id']).mean().reset_index()
+        df_tmp = df_tmp.groupby(lst_col_to_group).mean().reset_index()
 
-    # df_tmp.drop('fc_hor', axis=1, inplace=True)
-    df_tmp.sort_values(by=['Date', 'grid_id'],
-                           ascending=[True, True],
+    df_tmp.sort_values(by=lst_col_to_group,
+                           ascending=len(lst_col_to_group)*[True],
                            inplace=True)
     return df_tmp
 
@@ -244,23 +244,23 @@ class model_ml:
 
 
     def get_datas_2017(self):
-            # dt_start_pred < dt < dt_end_pred :
-            print('Reading 2017 weather csv ...')
-            df_weather_2017 = get_df_weather(lst_grid=self.lst_grid,
-                                             year='2017')
-            df_weather_2017 = drop_outof_dt_bounds(
-                dt_start_pred, dt_end_pred, df_weather_2017)
+        # dt_start_pred < dt < dt_end_pred :
+        print('Reading 2017 weather csv ...')
+        df_weather_2017 = get_df_weather(lst_grid=self.lst_grid,
+                                        year='2017')
+        df_weather_2017 = drop_outof_dt_bounds(
+            dt_start_pred, dt_end_pred, df_weather_2017)
 
-            print('Reading 2017 parks csv ...')
-            df_turb_2017 = get_df_turb_2017()
-            df_turb_2017 = drop_outof_dt_bounds(
-                dt_start_pred, dt_end_pred, df_turb_2017)
+        print('Reading 2017 parks csv ...')
+        df_turb_2017 = get_df_turb_2017()
+        df_turb_2017 = drop_outof_dt_bounds(
+            dt_start_pred, dt_end_pred, df_turb_2017)
 
-            # Production constraints : can only predict with forecast 1da
-            # meaning fc_hor >= 24 & fc_hor <= 47   cf. self.lst_da_test
-            self.df_2017 = merge_df_turb_weather(
-                df_turb=df_turb_2017, df_weather=df_weather_2017,
-                lst_da=self.lst_da_test)
+        # Production constraints : can only predict with forecast 1da
+        # meaning fc_hor >= 24 & fc_hor <= 47   cf. self.lst_da_test
+        self.df_2017 = merge_df_turb_weather(
+            df_turb=df_turb_2017, df_weather=df_weather_2017,
+            lst_da=self.lst_da_test)
 
 
     def get_datas(self):
@@ -273,33 +273,50 @@ class model_ml:
             df_turb=df_turb, df_weather=df_weather,
             lst_da=[1,2,3])
 
+        if self.submit_mode:
+            self.get_datas_2017()
+            self.df = pd.concat([self.df, self.df_2017])
+
+        # Adding turb_id column :
+        self.df['turb_id'] = self.df['Eolienne'].apply(
+            lambda x: int(x[4:])) # Filter 'Turb' from 'Turbx[x]'
         self.df = set_column_sequence(
             self.df,
-            ['Date', 'Production_mean_hour', 'fc_hor', 'grid_id', 'Eolienne'])
+            ['Date', 'Production_mean_hour', 'fc_hor', 'grid_id', 'turb_id'])
 
 
     def split_train_test(self, conveniance_fetch=True):
 
         if self.submit_mode:
             # Train set :
-            self.df_train = filter_fc_hor(self.df, lst_da=self.lst_da_train)
+            dt_start_train = min(self.df['Date'])
+            self.df_train = drop_outof_dt_bounds(
+                dt_start_train, dt_start_pred - timedelta(hours=1), self.df)
+            self.df_train = filter_fc_hor(
+                self.df_train,
+                lst_col_to_group=['Date', 'grid_id', 'turb_id'],
+                lst_da=self.lst_da_train)
+
             # Test set :
-            self.get_datas_2017()
-            self.df_test = self.df_2017
+            self.df_test = drop_outof_dt_bounds(dt_start_pred, dt_end_pred,
+                                                self.df)
+            self.df_test = filter_fc_hor(
+                self.df_test,
+                lst_col_to_group=['Date', 'grid_id', 'turb_id'],
+                lst_da=self.lst_da_test)
 
         else:
             # Train - Test split :
             self.df_train, self.df_test = train_test_split(
                 self.df, test_size=TEST_SIZE, random_state=SEED)
-
-        # Conveniance fetch :
-        if conveniance_fetch:
-            self.X = self.df[self.lst_col_model]
-            self.y = self.df[self.col_target]
-            self.X_train = self.df_train[self.lst_col_model]
-            self.y_train = self.df_train[self.col_target]
-            self.X_test = self.df_test[self.lst_col_model]
-            self.y_test = self.df_test[self.col_target]
+            # Conveniance fetch :
+            if conveniance_fetch:
+                self.X = self.df[self.lst_col_model]
+                self.y = self.df[self.col_target]
+                self.X_train = self.df_train[self.lst_col_model]
+                self.y_train = self.df_train[self.col_target]
+                self.X_test = self.df_test[self.lst_col_model]
+                self.y_test = self.df_test[self.col_target]
 
 
     def filter_outliers(self, zscore_max_abs=3):
@@ -383,6 +400,8 @@ class model_ml:
             '_' + str(now.hour) + '_' + str(now.minute) + '.csv'
         # Computing the mean production predicted for each hour according to
         # grid id :
+        self.df_test['Eolienne'] = self.df_test['turb_id'].apply(
+            lambda x: 'Turb' + str(x))
         df = self.df_test[['Date', 'Eolienne', 'pred']]
         df = df.groupby(['Date', 'Eolienne']).mean().reset_index()
         df.to_csv(fname_out, sep=';', index=False)
@@ -427,8 +446,8 @@ class model_ml:
 
 
     def feature_engineering(self):
-        # Add fc_hor and grid_id to the model :
-        self.lst_col_model += ['fc_hor', 'grid_id']
+        # Add Eolienne, fc_hor and grid_id to the model :
+        self.lst_col_model += ['fc_hor', 'grid_id', 'turb_id']
 
         # Let's take into account Datetime
         self.df['month'] = self.df['Date'].apply(lambda x: x.month)
@@ -451,6 +470,8 @@ class model_ml:
         # Delete some not important variables :
         self.lst_col_model = [x for x in self.lst_col_model if x not in
                             ['SSRD', 'TSR', 'TSRC']]
+
+
 
 # Some checks :
 if not os.path.isdir(data_dir):
@@ -479,7 +500,14 @@ expert_cv_parameters = {'max_depth':[4, 6, 10, 15],
                         'gamma': [0.05, 0.5, 0.9, 1.], # Minimum loss reduction required to make a further partition on a leaf node of the tree
                         }
 
+optimal_params = {'max_depth': 8, 'n_estimators': 300, 'learning_rate': 0.05}
+
 
 # m = model_ml(lst_turb=range(1, 12), lst_grid=range(1,17))
-m = model_ml(lst_turb=[1], lst_grid=[6,7,8,11], lst_da_train=[2])
+# m = model_ml(lst_turb=[1], lst_grid=[6,7,8,11], lst_da_train=[2])
+
+m = model_ml(lst_grid=range(1,17), submit_mode=True, lst_da_train=[1,2])
 m.get_datas()
+m.feature_engineering()
+m.split_train_test()
+
