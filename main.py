@@ -20,8 +20,8 @@ from sklearn.metrics import mean_absolute_error
 
 from sklearn.linear_model import LinearRegression
 from sklearn import ensemble
-from xgboost import XGBRegressor
-from xgboost import plot_importance
+from xgboost import XGBRegressor, plot_importance
+from ligthgbm import LGBMRegressor
 
 from sklearn.model_selection import (train_test_split, cross_val_score,
                                      GridSearchCV)
@@ -334,11 +334,13 @@ class model_ml:
 
         self.model = modeltype(**kwargs)
 
+        import time
+        start_counter = time.time()
+
         if early_stopping_rounds == None:
             print('Training ' + str(modeltype) + ' model ...')
             self.model.fit(self.df_train[self.lst_col_model],
                            self.df_train[self.col_target],
-                           verbose=True,
                            )
         else:
             print('Training ' + str(modeltype) +
@@ -350,8 +352,10 @@ class model_ml:
                            early_stopping_rounds=early_stopping_rounds,
                            eval_set=[(self.df_test[self.lst_col_model],
                                       self.df_test[self.col_target])],
-                           verbose=True,
                            )
+
+        delta_time = time.time() - start_counter
+        print '--- Model Fitted in ' + str(delta_time) + ' s ---'
 
         print('Predicting ' + str(modeltype) + ' model ...')
         self.df_test['pred'] = self.model.predict(
@@ -497,7 +501,6 @@ test_cv_parameters = {'max_depth':[4],
 expert_cv_parameters = {'max_depth':[4, 6, 10, 15],
                         'n_estimators': [10, 50, 100, 500],
                         'learning_rate': [0.01, 0.025, 0.05, 0.1],
-                        'gamma': [0.05, 0.5, 0.9, 1.], # Minimum loss reduction required to make a further partition on a leaf node of the tree
                         }
 
 optimal_params = {'max_depth': 8, 'n_estimators': 300, 'learning_rate': 0.05}
@@ -506,7 +509,7 @@ optimal_params = {'max_depth': 8, 'n_estimators': 300, 'learning_rate': 0.05}
 # m = model_ml(lst_turb=range(1, 12), lst_grid=range(1,17))
 # m = model_ml(lst_turb=[1], lst_grid=[6,7,8,11], lst_da_train=[2])
 
-m = model_ml(lst_grid=range(1,17), submit_mode=True, lst_da_train=[1,2])
+m = model_ml(lst_grid=[6, 7], lst_da_train=[2])
 m.get_datas()
 m.feature_engineering()
 m.split_train_test()
